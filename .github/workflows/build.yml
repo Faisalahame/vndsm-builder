@@ -1,0 +1,43 @@
+name: build-vndservicemanager
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (ARM32, static, 32-bit binder ABI)
+        run: |
+          set -e
+          NDK="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_ROOT:-$ANDROID_NDK_HOME}}"
+          echo "NDK=$NDK"
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          "$BIN/armv7a-linux-androideabi21-clang" -Os -Wall -Wextra -static -fno-pie -no-pie \
+              -Wl,--gc-sections vndsm.c -o vndservicemanager
+          "$BIN/llvm-strip" vndservicemanager
+          file vndservicemanager
+          readelf -h vndservicemanager | grep -E "Class|Machine"
+          if readelf -d vndservicemanager 2>/dev/null | grep -q NEEDED; then
+            echo "ERROR: binary is not fully static"; exit 1
+          fi
+          ls -l vndservicemanager
+          sha256sum vndservicemanager
+
+      - name: Self-test the ARM binary under qemu
+        run: |
+          set -e
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static
+          qemu-arm-static ./vndservicemanager --selftest 2>&1 | tee selftest.txt
+          grep -q "SELFTEST OK (protocol 7, bptr 4 bytes)" selftest.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vndservicemanager
+          path: |
+            vndservicemanager
+            selftest.txt
